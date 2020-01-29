@@ -3,8 +3,10 @@ use ggez::graphics::DrawParam;
 use ggez::*;
 use ggez::{Context, ContextBuilder, GameResult};
 
-const BOARD_WIDTH: usize = 15;
-const BOARD_HEIGHT: usize = 15;
+use rand::Rng;
+
+const BOARD_WIDTH: usize = 26;
+const BOARD_HEIGHT: usize = 26;
 
 fn main() {
     let (mut ctx, mut event_loop) = ContextBuilder::new("snake", "Andrew Peterson")
@@ -12,7 +14,7 @@ fn main() {
         .unwrap();
 
     let mut my_game = MyGame::new(&mut ctx);
-
+    my_game.put_food();
     ggez::graphics::set_window_title(&ctx, "snake");
 
     match event::run(&mut ctx, &mut event_loop, &mut my_game) {
@@ -23,12 +25,12 @@ fn main() {
 }
 
 struct MyGame {
-    dt: std::time::Duration,
     board: [TileState; BOARD_WIDTH * BOARD_HEIGHT],
     position: (usize, usize),
     screen_width: f32,
     screen_height: f32,
     facing: Facing,
+    prev_facing: Facing,
     snake_length: usize,
     tail: Vec<(usize, usize)>,
 }
@@ -40,63 +42,83 @@ impl MyGame {
         board[0] = TileState::SnakeHead;
         let (width, height) = graphics::drawable_size(ctx);
         MyGame {
-            dt: std::time::Duration::new(0, 0),
             board: board,
             position: (0, 0),
             screen_width: width,
             screen_height: height,
             facing: Facing::Up,
+            prev_facing: Facing::Right,
             snake_length: 3,
             tail: Vec::new(),
         }
     }
 
+    fn put_food(&mut self) {
+        let mut rng = rand::thread_rng();
+        let mut n: usize = rng.gen_range(0, BOARD_HEIGHT * BOARD_WIDTH);
+        while self.board[n] == TileState::SnakeBody || self.board[n] == TileState::SnakeHead {
+            n = rng.gen_range(0, BOARD_HEIGHT * BOARD_WIDTH);
+        }
+        self.board[n] = TileState::Food;
+    }
+
     fn handle_movement(&mut self, ctx: &mut Context) {
         let facing = facing_to_direction(self.facing);
+        self.prev_facing = self.facing;
         match self.board[convert_coords(
             (self.position.0 as i32 + facing.0) as usize,
             (self.position.1 as i32 + facing.1) as usize,
         )] {
             TileState::Empty => {
-                self.tail.push((self.position.0, self.position.1));
                 self.board[convert_coords(
                     (self.position.0 as i32 + facing.0) as usize,
                     (self.position.1 as i32 + facing.1) as usize,
                 )] = TileState::SnakeHead;
+                self.tail.push((self.position.0, self.position.1));
                 self.position.0 = (self.position.0 as i32 + facing.0) as usize;
                 self.position.1 = (self.position.1 as i32 + facing.1) as usize;
+                for i in &self.tail {
+                    self.board[convert_coords(i.0, i.1)] = TileState::Empty;
+                }
+                if self.tail.len() > self.snake_length {
+                    self.tail.drain(0..self.tail.len() - self.snake_length);
+                }
+                for i in &self.tail {
+                    self.board[convert_coords(i.0, i.1)] = TileState::SnakeBody;
+                }
             }
             TileState::Food => {
-                self.tail.push((self.position.0, self.position.1));
                 self.board[convert_coords(
                     (self.position.0 as i32 + facing.0) as usize,
                     (self.position.1 as i32 + facing.1) as usize,
                 )] = TileState::SnakeHead;
+                self.tail.push((self.position.0, self.position.1));
                 self.position.0 = (self.position.0 as i32 + facing.0) as usize;
                 self.position.1 = (self.position.1 as i32 + facing.1) as usize;
                 self.snake_length += 1;
                 for i in &self.tail {
                     self.board[convert_coords(i.0, i.1)] = TileState::Empty;
                 }
+                if self.tail.len() > self.snake_length {
+                    self.tail.drain(0..self.tail.len() - self.snake_length);
+                }
+                for i in &self.tail {
+                    self.board[convert_coords(i.0, i.1)] = TileState::SnakeBody;
+                }
+                self.put_food();
+                //Put another food in
             }
             TileState::SnakeBody => {
                 ggez::event::quit(ctx);
             }
             _ => println!("Whaaa?"),
         };
-        self.board[convert_coords(self.position.0, self.position.1)] = TileState::Empty;
-        self.board[convert_coords(
-            (self.position.0 as i32 + facing.0) as usize,
-            (self.position.1 as i32 + facing.1) as usize,
-        )] = TileState::SnakeHead;
-        self.position.0 = (self.position.0 as i32 + facing.0) as usize;
-        self.position.1 = (self.position.1 as i32 + facing.1) as usize;
     }
 }
 
 impl EventHandler for MyGame {
     fn update(&mut self, ctx: &mut Context) -> GameResult<()> {
-        const DESIRED_FPS: u32 = 3;
+        const DESIRED_FPS: u32 = 5;
         while timer::check_update_time(ctx, DESIRED_FPS) {
             match self.facing {
                 Facing::Up => {
@@ -129,7 +151,6 @@ impl EventHandler for MyGame {
                 }
             };
         }
-        self.dt = timer::delta(ctx);
         Ok(())
     }
 
@@ -144,10 +165,26 @@ impl EventHandler for MyGame {
             KeyCode::Escape => {
                 ggez::event::quit(ctx);
             }
-            KeyCode::Up => self.facing = Facing::Up,
-            KeyCode::Down => self.facing = Facing::Down,
-            KeyCode::Left => self.facing = Facing::Left,
-            KeyCode::Right => self.facing = Facing::Right,
+            KeyCode::Up => {
+                if self.prev_facing != Facing::Down {
+                    self.facing = Facing::Up
+                }
+            }
+            KeyCode::Down => {
+                if self.prev_facing != Facing::Up {
+                    self.facing = Facing::Down
+                }
+            }
+            KeyCode::Left => {
+                if self.prev_facing != Facing::Right {
+                    self.facing = Facing::Left
+                }
+            }
+            KeyCode::Right => {
+                if self.prev_facing != Facing::Left {
+                    self.facing = Facing::Right
+                }
+            }
             _ => (),
         }
     }
@@ -199,7 +236,7 @@ fn convert_coords(x: usize, y: usize) -> usize {
     x + y * BOARD_WIDTH
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 enum Facing {
     Up,
     Down,
@@ -216,7 +253,7 @@ fn facing_to_direction(facing: Facing) -> (i32, i32) {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 enum TileState {
     Food,
     Empty,
